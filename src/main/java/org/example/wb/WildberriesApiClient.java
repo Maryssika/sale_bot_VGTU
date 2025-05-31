@@ -140,8 +140,15 @@ public class WildberriesApiClient {
                 );
 
                 productList.add(p);
-                mongoDBService.saveOrUpdateProduct(query, p.getId(), p.getName(),
-                        p.getPrice(), p.getBrand(), p.getRating());
+                mongoDBService.saveOrUpdateProduct(
+                        MongoDBService.Marketplace.WILDBERRIES,
+                        query,
+                        p.getId(),
+                        p.getName(),
+                        p.getPrice(),
+                        p.getBrand(),
+                        p.getRating()
+                );
             } catch (Exception e) {
                 logger.log(Level.WARNING, "Ошибка обработки товара", e);
             }
@@ -162,7 +169,7 @@ public class WildberriesApiClient {
             ));
         }
 
-        Document stats = mongoDBService.getSearchStats(query);
+        Document stats = mongoDBService.getSearchStats(MongoDBService.Marketplace.WILDBERRIES, query);
         if (stats != null) {
             result.append(String.format(
                     "\n📊 Этот запрос искали %d раз(а)",
