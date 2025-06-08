@@ -27,7 +27,7 @@ public class MongoDBService {
     }
 
     public MongoDBService() {
-        MongoClient mongoClient = MongoClients.create("mongodb://localhost:27017");
+        MongoClient mongoClient = MongoClients.create("mongodb+srv://kasatkinnikita13:T9lswrFtZMLgl6Wj@cluster0.vx90u17.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0");
         MongoDatabase saleBotDB = mongoClient.getDatabase("sale_bot");
 
         // Коллекции для разных маркетплейсов
