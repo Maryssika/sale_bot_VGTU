@@ -7,10 +7,10 @@ import com.mongodb.client.MongoDatabase;
 import com.mongodb.client.model.UpdateOptions;
 import org.bson.Document;
 
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.List;
-import java.util.Map;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.util.*;
 
 import static com.mongodb.client.model.Filters.*;
 import static com.mongodb.client.model.Updates.*;
@@ -30,11 +30,9 @@ public class MongoDBService {
         MongoClient mongoClient = MongoClients.create("mongodb+srv://kasatkinnikita13:T9lswrFtZMLgl6Wj@cluster0.vx90u17.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0");
         MongoDatabase saleBotDB = mongoClient.getDatabase("sale_bot");
 
-        // Коллекции для разных маркетплейсов
         this.wbProductsCollection = saleBotDB.getCollection("wb_products");
         this.ozonProductsCollection = saleBotDB.getCollection("ozon_products");
 
-        // БД для информации и логов
         MongoDatabase saleBotInfoDB = mongoClient.getDatabase("sale_bot_info");
         this.apiDataCollection = saleBotInfoDB.getCollection("api_data");
         this.errorLogsCollection = saleBotInfoDB.getCollection("error_logs");
@@ -43,20 +41,14 @@ public class MongoDBService {
     }
 
     private void createIndexes() {
-        // Индексы для Wildberries
         wbProductsCollection.createIndex(new Document("query", 1));
         wbProductsCollection.createIndex(new Document("foundProducts.productId", 1));
-
-        // Индексы для Ozon
         ozonProductsCollection.createIndex(new Document("query", 1));
         ozonProductsCollection.createIndex(new Document("foundProducts.productId", 1));
-
-        // Индексы для логов и API данных
         errorLogsCollection.createIndex(new Document("timestamp", -1));
         apiDataCollection.createIndex(new Document("processed", 1));
     }
 
-    // Сохранение продуктов с указанием маркетплейса
     public void saveOrUpdateProduct(Marketplace marketplace, String query,
                                     String productId, String name, int price,
                                     String brand, int rating) {
@@ -73,8 +65,8 @@ public class MongoDBService {
                     .append("lastUpdated", new Date());
 
             collection.updateOne(
-                    eq("query", query), // Фильтр по query
-                    combine( // Обновляющие операторы
+                    eq("query", query),
+                    combine(
                             setOnInsert("query", query),
                             addToSet("foundProducts", productDoc),
                             inc("searchCount", 1),
@@ -91,12 +83,31 @@ public class MongoDBService {
         }
     }
 
-    private MongoCollection<Document> getCollectionForMarketplace(Marketplace marketplace) {
-        return marketplace == Marketplace.WILDBERRIES ?
-                wbProductsCollection : ozonProductsCollection;
+    public List<Document> getCachedProducts(Marketplace marketplace, String query) {
+        Document doc = getCollectionForMarketplace(marketplace)
+                .find(eq("query", query))
+                .projection(new Document("foundProducts", 1).append("lastUpdated", 1))
+                .first();
+
+        if (doc != null) {
+            Date lastUpdated = doc.getDate("lastUpdated");
+            if (lastUpdated != null && (new Date().getTime() - lastUpdated.getTime()) < 2 * 60 * 60 * 1000) {
+                return (List<Document>) doc.get("foundProducts");
+            }
+        }
+        return null;
     }
 
-    // Остальные методы остаются без изменений
+    public void clearOldCache(Marketplace marketplace, int hours) {
+        MongoCollection<Document> collection = getCollectionForMarketplace(marketplace);
+        long cutoff = System.currentTimeMillis() - (hours * 60 * 60 * 1000);
+        collection.deleteMany(lt("lastUpdated", new Date(cutoff)));
+    }
+
+    private MongoCollection<Document> getCollectionForMarketplace(Marketplace marketplace) {
+        return marketplace == Marketplace.WILDBERRIES ? wbProductsCollection : ozonProductsCollection;
+    }
+
     public void saveApiRawData(String endpoint, String request, String response) {
         Document doc = new Document()
                 .append("timestamp", new Date())
@@ -118,10 +129,36 @@ public class MongoDBService {
         errorLogsCollection.insertOne(errorDoc);
     }
 
-    // Получение статистики по маркетплейсу
     public Document getSearchStats(Marketplace marketplace, String query) {
         return getCollectionForMarketplace(marketplace)
                 .find(eq("query", query))
                 .first();
+    }
+
+    public String getCacheInfo(Marketplace marketplace, String query) {
+        Document doc = getCollectionForMarketplace(marketplace)
+                .find(eq("query", query))
+                .first();
+
+        if (doc == null) return "Кэш не найден для запроса '" + query + "'";
+
+        Date lastUpdated = doc.getDate("lastUpdated");
+        int count = doc.getList("foundProducts", Document.class, new ArrayList<>()).size();
+        int searches = doc.getInteger("searchCount", 0);
+
+        // Форматирование даты
+        String formattedDate = "неизвестно";
+        if (lastUpdated != null) {
+            Instant instant = lastUpdated.toInstant();
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss")
+                    .withLocale(new Locale("ru"))
+                    .withZone(ZoneId.systemDefault());
+            formattedDate = formatter.format(instant);
+        }
+
+        return String.format(
+                "ℹ️ Кэш для запроса: '%s'\n📦 Найдено товаров: %d\n🕒 Последнее обновление: %s\n🔄 Искомо раз: %d",
+                query, count, formattedDate, searches
+        );
     }
 }
