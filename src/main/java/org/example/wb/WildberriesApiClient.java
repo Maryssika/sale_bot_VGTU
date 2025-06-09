@@ -37,81 +37,97 @@ public class WildberriesApiClient {
         this.mongoDBService = new MongoDBService();
     }
 
-    // Запрос к WB и обработка результатов
-    public String searchProduct(String query, long chatId, String traceId) {
-        long startTime = System.currentTimeMillis();
-        String endpoint = "/exactmatch/ru/male/v4/search";
+public String searchProduct(String query, long chatId, String traceId) {
+    logger.info("Начинаем поиск товара по запросу: '" + query + "'");
 
-        if (query == null || query.trim().isEmpty()) {
-            mongoDBService.logCommand("empty_query", mongoDBService.createMetadata(traceId, chatId).build());
-            return "Поисковый запрос не может быть пустым";
+    if (query == null || query.trim().isEmpty()) {
+        mongoDBService.logCommand("empty_query", mongoDBService.createMetadata(traceId, chatId).build());
+        return "Поисковый запрос не может быть пустым";
+    }
+
+    // Проверка кэша
+    List<Document> cached = mongoDBService.getCachedProducts(MongoDBService.Marketplace.WILDBERRIES, query);
+    if (cached != null && !cached.isEmpty()) {
+        logger.info("Найден кэш по запросу '" + query + "'; количество товаров: " + cached.size());
+        List<Product> products = new ArrayList<>();
+        for (Document d : cached) {
+            products.add(new Product(
+                    d.getString("productId"),
+                    d.getString("name"),
+                    getIntSafe(d, "price"),
+                    d.getString("brand"),
+                    getIntSafe(d, "rating")
+            ));
         }
+        logger.info("Возвращаем результаты из кэша");
+        return formatResults(products, query);
+    }
+    
+    logger.info("Кэш по запросу '" + query + "' не найден, обращаемся к API Wildberries");
 
-        // Кодируем запрос и формируем URL
-        String encodedQuery = URLEncoder.encode(query.trim(), StandardCharsets.UTF_8);
-        String requestUrl = WB_SEARCH_API + "?query=" + encodedQuery + "&resultset=catalog&dest=-1257786";
+    long startTime = System.currentTimeMillis();
+    String encodedQuery = URLEncoder.encode(query.trim(), StandardCharsets.UTF_8);
+    String requestUrl = String.format("%s?query=%s&resultset=catalog&dest=-1257786", WB_SEARCH_API, encodedQuery);
+   
+}
 
         // Повторяем попытки до MAX_RETRIES
         for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
             try {
-                // Логируем начало запроса
-                mongoDBService.logApiRequest("api_request_start", mongoDBService.createMetadata(traceId, chatId)
-                        .with("endpoint", endpoint)
-                        .with("query", query)
-                        .with("attempt", attempt)
-                        .build());
+// Логируем начало запроса
+mongoDBService.logApiRequest("api_request_start", mongoDBService.createMetadata(traceId, chatId)
+        .with("endpoint", endpoint)
+        .with("query", query)
+        .with("attempt", attempt)
+        .build());
 
-                // Сборка и отправка запроса
-                HttpRequest request = buildRequest(requestUrl);
-                HttpResponse<String> response = sendRequest(request);
+try {
+    logger.info("Попытка №" + attempt + " выполнить запрос к API: " + requestUrl);
+    HttpRequest request = buildRequest(requestUrl);
+    HttpResponse<String> response = sendRequest(request);
 
-                mongoDBService.logApiRawData(endpoint, request.uri().toString(), response.body(), traceId);
+    // Логируем сырой ответ API в базу
+    mongoDBService.logApiRawData(endpoint, request.uri().toString(), response.body(), traceId);
 
-                if (response.statusCode() == 200) {
-                    String result = processSuccessfulResponse(response.body(), query, chatId, traceId);
+    if (response.statusCode() == 200) {
+        logger.info("Успешный ответ от API (код 200)");
+        String result = processSuccessfulResponse(response.body(), query, chatId, traceId);
 
-                    // Логируем успешный результат
-                    mongoDBService.logApiRequest("api_request_success", mongoDBService.createMetadata(traceId, chatId)
-                            .with("endpoint", endpoint)
-                            .with("query", query)
-                            .with("executionTimeMs", System.currentTimeMillis() - startTime)
-                            .with("attempts", attempt)
-                            .build());
+        // Логируем успешный результат
+        mongoDBService.logApiRequest("api_request_success", mongoDBService.createMetadata(traceId, chatId)
+                .with("endpoint", endpoint)
+                .with("query", query)
+                .with("executionTimeMs", System.currentTimeMillis() - startTime)
+                .with("attempts", attempt)
+                .build());
 
-                    return result;
-                } else {
-                    // Логируем ошибку, если не 200 OK
-                    mongoDBService.logApiRequest("api_request_error", mongoDBService.createMetadata(traceId, chatId)
-                            .with("statusCode", response.statusCode())
-                            .with("error", response.body())
-                            .with("attempt", attempt)
-                            .build());
-                    return handleErrorResponse(response);
-                }
-            } catch (IOException | InterruptedException e) {
-                // Логируем исключение
-                mongoDBService.logApiRequest("api_request_exception", mongoDBService.createMetadata(traceId, chatId)
-                        .with("error", e.getMessage())
-                        .with("attempt", attempt)
-                        .with("stackTrace", Arrays.toString(e.getStackTrace()))
-                        .build());
-
-                // Если попытки закончились — сообщаем об ошибке
-                if (attempt == MAX_RETRIES) {
-                    return "Не удалось выполнить запрос после нескольких попыток";
-                }
-
-                try {
-                    Thread.sleep(1000 * attempt);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    return "Операция была прервана";
-                }
-            }
-        }
-
-        return "Произошла ошибка при поиске товаров";
+        return result;
+    } else {
+        logger.warning("Ошибка ответа от API. Код: " + response.statusCode());
+        // Логируем ошибку, если не 200 OK
+        mongoDBService.logApiRequest("api_request_error", mongoDBService.createMetadata(traceId, chatId)
+                .with("statusCode", response.statusCode())
+                .with("error", response.body())
+                .with("attempt", attempt)
+                .build());
+        return handleErrorResponse(response);
     }
+} catch (IOException | InterruptedException e) {
+    logger.log(Level.WARNING, "Ошибка при выполнении запроса (попытка " + attempt + ")", e);
+    // Логируем исключение
+    mongoDBService.logApiRequest("api_request_exception", mongoDBService.createMetadata(traceId, chatId)
+            .with("error", e.getMessage())
+            .with("attempt", attempt)
+            .with("stackTrace", Arrays.toString(e.getStackTrace()))
+            .build());
+
+    // Если попытки закончились — сообщаем об ошибке
+    if (attempt == MAX_RETRIES) {
+        logger.severe("Все попытки выполнены, возвращаем сообщение об ошибке");
+        return "Не удалось выполнить запрос после нескольких попыток";
+    }
+}
+
 
     // Построение HTTP-запроса
     private HttpRequest buildRequest(String url) {
@@ -124,7 +140,6 @@ public class WildberriesApiClient {
                 .build();
     }
 
-    // Отправка HTTP-запроса
     private HttpResponse<String> sendRequest(HttpRequest request) throws IOException, InterruptedException {
         return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
     }
@@ -132,36 +147,45 @@ public class WildberriesApiClient {
     // Обработка успешного JSON-ответа от API
     private String processSuccessfulResponse(String jsonResponse, String query, long chatId, String traceId) {
         try {
+            mongoDBService.saveApiRawData("/api/process", "query=" + query, jsonResponse);
+
             JSONObject jsonObject = new JSONObject(jsonResponse);
             JSONObject data = jsonObject.optJSONObject("data");
 
             // Если нет блока data, значит что-то пошло не так
             if (data == null) {
-                mongoDBService.logApiRequest("api_data_missing", mongoDBService.createMetadata(traceId, chatId)
-                        .with("query", query)
-                        .with("responseSample", jsonResponse.substring(0, 100))
-                        .build());
-                return "Некорректный ответ от сервера";
-            }
+ mongoDBService.logApiRequest("api_data_missing", mongoDBService.createMetadata(traceId, chatId)
+            .with("query", query)
+            .with("responseSample", jsonResponse.substring(0, 100))
+            .build());
+    
+    logger.warning("Некорректный ответ от сервера Wildberries: отсутствует поле 'data'");
+    return "Некорректный ответ от сервера Wildberries";
+}
 
-            // Логируем метаданные каталога (если есть)
-            if (data.has("metadata")) {
-                JSONObject metadata = data.getJSONObject("metadata");
-                mongoDBService.logApiRequest("api_metadata", mongoDBService.createMetadata(traceId, chatId)
-                        .with("catalogType", metadata.optString("catalog_type"))
-                        .with("catalogValue", metadata.optString("catalog_value"))
-                        .build());
-            }
-
+// Логируем метаданные каталога (если есть)
+if (data.has("metadata")) {
+    JSONObject metadata = data.getJSONObject("metadata");
+    mongoDBService.logApiRequest("api_metadata", mongoDBService.createMetadata(traceId, chatId)
+            .with("catalogType", metadata.optString("catalog_type"))
+            .with("catalogValue", metadata.optString("catalog_value"))
+            .build());
+}
             // Извлекаем список продуктов
             JSONArray products = data.optJSONArray("products");
             if (products == null || products.isEmpty()) {
+                logger.info("По запросу '" + query + "' товары не найдены");
                 return "Товары по запросу '" + query + "' не найдены";
             }
 
-            // Парсим список продуктов и возвращаем отформатированную строку
-            List<Product> productList = parseProducts(products, query, chatId, traceId);
-            return formatResults(productList, query);
+// Парсим список продуктов и возвращаем отформатированную строку
+List<Product> productList = parseProducts(products, query, chatId, traceId);
+
+// Логируем информацию о количестве обработанных товаров
+logger.info("Обработано " + productList.size() + " товаров, возвращаем результаты");
+
+return formatResults(productList, query);
+
 
         } catch (Exception e) {
             // Логируем ошибки при парсинге
@@ -189,34 +213,41 @@ public class WildberriesApiClient {
                 );
                 productList.add(p);
 
-                // Сохраняем продукт в MongoDB
-                mongoDBService.saveOrUpdateProduct(
-                        MongoDBService.Marketplace.WILDBERRIES,
-                        query,
-                        p.getId(),
-                        p.getName(),
-                        p.getPrice(),
-                        p.getBrand(),
-                        p.getRating(),
-                        traceId
-                );
-            } catch (Exception e) {
-                // Логируем ошибку при разборе конкретного товара
-                mongoDBService.logApiRequest("product_parsing_error", mongoDBService.createMetadata(traceId, chatId)
-                        .with("error", e.getMessage())
-                        .with("productIndex", i)
-                        .with("stackTrace", Arrays.toString(e.getStackTrace()))
-                        .build());
-            }
-        }
+ try {
+    // Логируем сохранение в кэш
+    logger.fine(String.format("Сохраняем в кэш: %s (ID: %s)", p.getName(), p.getId()));
+
+    // Сохраняем продукт в MongoDB
+    mongoDBService.saveOrUpdateProduct(
+            MongoDBService.Marketplace.WILDBERRIES,
+            query,
+            p.getId(),
+            p.getName(),
+            p.getPrice(),
+            p.getBrand(),
+            p.getRating(),
+            traceId // Добавляем traceId для отслеживания
+    );
+} catch (Exception e) {
+    // Логируем ошибку при разборе конкретного товара
+    mongoDBService.logApiRequest("product_parsing_error", 
+            mongoDBService.createMetadata(traceId, chatId)
+                    .with("error", e.getMessage())
+                    .with("productIndex", i)
+                    .with("stackTrace", Arrays.toString(e.getStackTrace()))
+                    .build());
+    
+    // Логируем предупреждение об ошибке
+    logger.log(Level.WARNING, "Ошибка обработки товара при парсинге", e);
+}
+
+           }
         return productList;
     }
 
     // Формирование строки с результатами для ответа пользователю
     private String formatResults(List<Product> products, String query) {
-        StringBuilder result = new StringBuilder();
-        result.append("🔍 Результаты поиска '").append(query).append("':\n\n");
-
+        StringBuilder result = new StringBuilder("🔍 Результаты поиска '" + query + "':\n\n");
         for (int i = 0; i < products.size(); i++) {
             Product p = products.get(i);
             result.append(String.format(
@@ -228,25 +259,27 @@ public class WildberriesApiClient {
         // Добавляем статистику поиска
         Document stats = mongoDBService.getSearchStats(MongoDBService.Marketplace.WILDBERRIES, query);
         if (stats != null) {
-            result.append(String.format(
-                    "\n📊 Этот запрос искали %d раз(а)",
-                    stats.getInteger("searchCount", 1)
-            ));
+            result.append(String.format("\n📊 Этот запрос искали %d раз(а)", stats.getInteger("searchCount", 1)));
         }
-
         return result.toString();
     }
 
     // Формирование сообщения об ошибке при плохом статус-коде
     private String handleErrorResponse(HttpResponse<String> response) {
-        return String.format(
-                "Ошибка при поиске товара. Код: %d\nОтвет сервера: %s",
-                response.statusCode(),
-                response.body()
-        );
-    }
+String errorMsg = String.format(
+        "Ошибка при поиске товара. Код: %d\nОтвет сервера: %s",
+        response.statusCode(),
+        response.body()
+);
 
-    // Внутренний класс для представления товара
+// Логируем предупреждение об ошибке
+logger.warning(errorMsg);
+
+// Логируем ошибку в MongoDB
+mongoDBService.logError("api_error", errorMsg, Map.of("statusCode", response.statusCode()));
+
+return errorMsg;
+
     private static class Product {
         private final String id;
         private final String name;
@@ -267,5 +300,17 @@ public class WildberriesApiClient {
         public int getPrice() { return price; }
         public String getBrand() { return brand; }
         public int getRating() { return rating; }
+    }
+
+    public String getCacheInfo(String query) {
+        logger.info("Запрос информации о кэше для '" + query + "'");
+        String info = mongoDBService.getCacheInfo(MongoDBService.Marketplace.WILDBERRIES, query);
+        if (info == null || info.isEmpty()) {
+            logger.info("Кэш для '" + query + "' не найден");
+            return "Кэш для '" + query + "' не найден";
+        } else {
+            logger.info("Информация о кэше для '" + query + "' найдена");
+            return "Информация о кэше для '" + query + "':\n" + info;
+        }
     }
 }

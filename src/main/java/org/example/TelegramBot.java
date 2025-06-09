@@ -40,13 +40,20 @@ public class TelegramBot extends TelegramLongPollingBot {
 
             try {
                 // Обработка команды поиска
-                if (messageText.startsWith("/search ")) {
-                    handleSearchCommand(messageText, chatId, traceId, response);
-                } else {
-                    // Обработка неизвестных команд
-                    handleOtherCommand(messageText, chatId, traceId, response);
-                }
-
+                 if (messageText.startsWith("/search ")) {
+    String query = messageText.substring(8).trim();
+    if (!query.isEmpty()) {
+        String searchResult = wbApiClient.searchProduct(query);
+        response.setText(searchResult);
+        mongoDBService.logSearchQuery(query, traceId); // добавили логирование
+    } else {
+        response.setText("Введите поисковый запрос после команды /search");
+    }
+} else if (messageText.startsWith("/cacheinfo ")) {
+    // аналогично для /cacheinfo
+} else {
+    response.setText("Команды:\n/search [запрос] — поиск товаров\n/cacheinfo [запрос] — информация о кэше");
+}
                 // Отправка ответа пользователю
                 execute(response);
 
