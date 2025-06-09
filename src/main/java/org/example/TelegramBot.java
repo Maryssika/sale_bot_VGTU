@@ -31,8 +31,18 @@ public class TelegramBot extends TelegramLongPollingBot {
                     } else {
                         message.setText("Введите поисковый запрос после команды /search");
                     }
+
+                } else if (messageText.startsWith("/cacheinfo ")) {
+                    String query = messageText.substring(11).trim();
+                    if (!query.isEmpty()) {
+                        String info = wbApiClient.getCacheInfo(query);
+                        message.setText(info);
+                    } else {
+                        message.setText("Введите поисковый запрос после команды /cacheinfo");
+                    }
+
                 } else {
-                    message.setText("Используйте команду /search [запрос] для поиска товаров на Wildberries");
+                    message.setText("Команды:\n/search [запрос] — поиск товаров\n/cacheinfo [запрос] — информация о кэше");
                 }
 
                 execute(message);
