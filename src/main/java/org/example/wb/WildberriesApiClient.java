@@ -1,9 +1,9 @@
 package org.example.wb;
 
 import org.bson.Document;
+import org.example.db.MongoDBService;
 import org.json.JSONArray;
 import org.json.JSONObject;
-import org.example.db.MongoDBService;
 
 import java.io.IOException;
 import java.net.URI;
@@ -14,6 +14,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.logging.Level;
@@ -35,9 +36,11 @@ public class WildberriesApiClient {
         this.mongoDBService = new MongoDBService();
     }
 
-    public String searchProduct(String query) {
+    public Document searchProduct(String query) {
+        Document resultDocument = new Document();
         if (query == null || query.trim().isEmpty()) {
-            return "Поисковый запрос не может быть пустым";
+            resultDocument.append("error", "Поисковый запрос не может быть пустым");
+            return resultDocument;
         }
 
         String encodedQuery = URLEncoder.encode(query.trim(), StandardCharsets.UTF_8);
@@ -51,7 +54,6 @@ public class WildberriesApiClient {
                 HttpRequest request = buildRequest(requestUrl);
                 HttpResponse<String> response = sendRequest(request);
 
-                // Сохраняем сырой ответ перед обработкой
                 mongoDBService.saveApiRawData(
                         "/exactmatch/ru/male/v4/search",
                         "query=" + encodedQuery + "&resultset=catalog&dest=-1257786",
@@ -61,13 +63,15 @@ public class WildberriesApiClient {
                 if (response.statusCode() == 200) {
                     return processSuccessfulResponse(response.body(), query);
                 } else {
-                    return handleErrorResponse(response);
+                    resultDocument.append("error", handleErrorResponse(response));
+                    return resultDocument;
                 }
             } catch (IOException | InterruptedException e) {
                 logger.log(Level.WARNING, "Ошибка при попытке {0}: {1}",
                         new Object[]{attempt, e.getMessage()});
                 if (attempt == MAX_RETRIES) {
-                    return "Произошла ошибка при поиске товаров. Попробуйте позже.";
+                    resultDocument.append("error", "Произошла ошибка при поиске товаров. Попробуйте позже.");
+                    return resultDocument;
                 }
                 try {
                     Thread.sleep(1000 * attempt);
@@ -76,7 +80,8 @@ public class WildberriesApiClient {
                 }
             }
         }
-        return "Не удалось выполнить запрос после нескольких попыток";
+        resultDocument.append("error", "Не удалось выполнить запрос после нескольких попыток");
+        return resultDocument;
     }
 
     private HttpRequest buildRequest(String url) {
@@ -95,89 +100,73 @@ public class WildberriesApiClient {
         return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
     }
 
-    private String processSuccessfulResponse(String jsonResponse, String query) {
-        try {
-            // Сохраняем сырой JSON перед парсингом
-            mongoDBService.saveApiRawData(
-                    "/api/process",
-                    "query=" + query,
-                    jsonResponse
-            );
+    private Document processSuccessfulResponse(String jsonResponse, String query) {
+        Document resultDocument = new Document();
+        List<Document> productsList = new ArrayList<>();
 
+        try {
             JSONObject jsonObject = new JSONObject(jsonResponse);
             JSONObject data = jsonObject.optJSONObject("data");
 
             if (data == null) {
                 logger.warning("Некорректный формат ответа: отсутствует data");
-                return "Некорректный ответ от сервера Wildberries";
+                resultDocument.append("error", "Некорректный ответ от сервера Wildberries");
+                return resultDocument;
             }
 
             JSONArray products = data.optJSONArray("products");
             if (products == null || products.isEmpty()) {
-                return "Товары по запросу '" + query + "' не найдены";
+                resultDocument.append("error", "Товары по запросу '" + query + "' не найдены");
+                return resultDocument;
             }
 
-            List<Product> productList = parseProducts(products, query);
-            return formatResults(productList, query);
+            for (int i = 0; i < Math.min(5, products.length()); i++) {
+                try {
+                    JSONObject product = products.getJSONObject(i);
+                    Document productDoc = new Document()
+                            .append("productId", product.optString("id", ""))
+                            .append("name", product.optString("name", "Название не указано"))
+                            .append("price", product.optInt("priceU", 0) / 100)
+                            .append("brand", product.optString("brand", "Бренд не указан"))
+                            .append("rating", product.optInt("reviewRating", 0));
+
+                    productsList.add(productDoc);
+
+                    // Сохраняем метрику цены
+                    Document priceMetric = new Document()
+                            .append("productId", productDoc.getString("productId"))
+                            .append("marketplace", MongoDBService.Marketplace.WILDBERRIES.name())
+                            .append("price", productDoc.getInteger("price"))
+                            .append("eventType", "price_update")
+                            .append("timestamp", new Date());
+
+                    mongoDBService.getProductMetricsCollection().insertOne(priceMetric);
+
+                    mongoDBService.saveOrUpdateProduct(
+                            MongoDBService.Marketplace.WILDBERRIES,
+                            query,
+                            productDoc.getString("productId"),
+                            productDoc.getString("name"),
+                            productDoc.getInteger("price"),
+                            productDoc.getString("brand"),
+                            productDoc.getInteger("rating")
+                    );
+                } catch (Exception e) {
+                    logger.log(Level.WARNING, "Ошибка обработки товара", e);
+                }
+            }
+
+            resultDocument.append("foundProducts", productsList);
+            resultDocument.append("query", query);
+            resultDocument.append("lastUpdated", new Date());
+            resultDocument.append("marketplace", MongoDBService.Marketplace.WILDBERRIES.name());
+
+            return resultDocument;
         } catch (Exception e) {
             logger.log(Level.SEVERE, "Ошибка обработки ответа", e);
-            return "Ошибка при обработке результатов поиска";
+            resultDocument.append("error", "Ошибка при обработке результатов поиска");
+            return resultDocument;
         }
-    }
-
-    private List<Product> parseProducts(JSONArray products, String query) {
-        List<Product> productList = new ArrayList<>();
-
-        for (int i = 0; i < Math.min(5, products.length()); i++) {
-            try {
-                JSONObject product = products.getJSONObject(i);
-                Product p = new Product(
-                        product.optString("id", ""),
-                        product.optString("name", "Название не указано"),
-                        product.optInt("priceU", 0) / 100,
-                        product.optString("brand", "Бренд не указан"),
-                        product.optInt("reviewRating", 0)
-                );
-
-                productList.add(p);
-                mongoDBService.saveOrUpdateProduct(
-                        MongoDBService.Marketplace.WILDBERRIES,
-                        query,
-                        p.getId(),
-                        p.getName(),
-                        p.getPrice(),
-                        p.getBrand(),
-                        p.getRating()
-                );
-            } catch (Exception e) {
-                logger.log(Level.WARNING, "Ошибка обработки товара", e);
-            }
-        }
-
-        return productList;
-    }
-
-    private String formatResults(List<Product> products, String query) {
-        StringBuilder result = new StringBuilder();
-        result.append("🔍 Результаты поиска '").append(query).append("':\n\n");
-
-        for (int i = 0; i < products.size(); i++) {
-            Product p = products.get(i);
-            result.append(String.format(
-                    "%d. %s\n💰 Цена: %,d ₽\n🏷 Бренд: %s\n⭐ Рейтинг: %d/5\n🔗 https://www.wildberries.ru/catalog/%s/detail.aspx\n\n",
-                    i + 1, p.getName(), p.getPrice(), p.getBrand(), p.getRating(), p.getId()
-            ));
-        }
-
-        Document stats = mongoDBService.getSearchStats(MongoDBService.Marketplace.WILDBERRIES, query);
-        if (stats != null) {
-            result.append(String.format(
-                    "\n📊 Этот запрос искали %d раз(а)",
-                    stats.getInteger("searchCount", 1)
-            ));
-        }
-
-        return result.toString();
     }
 
     private String handleErrorResponse(HttpResponse<String> response) {
@@ -190,27 +179,5 @@ public class WildberriesApiClient {
         mongoDBService.logError("api_error", errorMsg,
                 Map.of("statusCode", response.statusCode()));
         return errorMsg;
-    }
-
-    private static class Product {
-        private final String id;
-        private final String name;
-        private final int price;
-        private final String brand;
-        private final int rating;
-
-        public Product(String id, String name, int price, String brand, int rating) {
-            this.id = id;
-            this.name = name;
-            this.price = price;
-            this.brand = brand;
-            this.rating = rating;
-        }
-
-        public String getId() { return id; }
-        public String getName() { return name; }
-        public int getPrice() { return price; }
-        public String getBrand() { return brand; }
-        public int getRating() { return rating; }
     }
 }
