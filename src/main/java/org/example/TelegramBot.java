@@ -18,11 +18,15 @@ public class TelegramBot extends TelegramLongPollingBot {
     private final WildberriesApiClient wbApiClient;
     private final MongoDBService mongoDBService;
     private final ForecastService forecastService;
+    private final GoogleShoppingParser googleShoppingParser;
+
 
     public TelegramBot() {
         this.wbApiClient = new WildberriesApiClient();
         this.mongoDBService = new MongoDBService();
         this.forecastService = new ForecastService(mongoDBService);
+        this.googleShoppingParser = new GoogleShoppingParser();
+
     }
 
     @Override
@@ -64,22 +68,26 @@ public class TelegramBot extends TelegramLongPollingBot {
             response.setChatId(String.valueOf(chatId));
 
             try {
-                if (messageText.startsWith("/search ")) {
+                if (messageText.startsWith("/wb ")) {
                     handleSearchCommand(messageText, chatId, traceId, response);
                 } else if (messageText.startsWith("/cacheinfo ")) {
                     handleCacheInfoCommand(messageText, chatId, traceId, response);
                 } else if (messageText.startsWith("/forecast ")) {
                     handleForecastCommand(messageText, chatId, traceId, response);
+                } else if (messageText.startsWith("/google ")) {
+                    handleGoogleShoppingCommand(messageText, chatId, traceId, response);
                 } else if (messageText.equals("/start")) {
                     response.setText("Добро пожаловать! Используйте команды:\n" +
-                            "/search [запрос] - поиск товаров\n" +
+                            "/wb [запрос] - поиск товаров\n" +
                             "/cacheinfo [запрос] - информация о кэше\n" +
-                            "/forecast [запрос] - прогноз цен на 7 дней");
+                            "/forecast [запрос] - прогноз цен на 7 дней\n" +
+                            "/google [запрос] - поиск товаров в Google Shopping");
                 } else {
                     response.setText("Неизвестная команда. Доступные команды:\n" +
-                            "/search [запрос] - поиск товаров\n" +
+                            "/wb [запрос] - поиск товаров\n" +
                             "/cacheinfo [запрос] - информация о кэше\n" +
-                            "/forecast [запрос] - прогноз цен на 7 дней");
+                            "/forecast [запрос] - прогноз цен на 7 дней\n" +
+                            "/google [запрос] - поиск товаров в Google Shopping");
                 }
 
                 execute(response);
@@ -95,6 +103,25 @@ public class TelegramBot extends TelegramLongPollingBot {
             }
         }
     }
+
+    private void handleGoogleShoppingCommand(String messageText, long chatId, String traceId, SendMessage response) {
+        String query = messageText.substring(8).trim();
+        if (query.isEmpty()) {
+            response.setText("Введите поисковый запрос после команды /google");
+            mongoDBService.logCommand("empty_google_query",
+                    mongoDBService.createMetadata(traceId, chatId).build());
+            return;
+        }
+
+        mongoDBService.logCommand("google_shopping_command",
+                mongoDBService.createMetadata(traceId, chatId)
+                        .with("query", query)
+                        .build());
+
+        String searchResult = googleShoppingParser.parseGoogleShopping(query);
+        response.setText(searchResult);
+    }
+
 
     private void handleForecastCommand(String messageText, long chatId, String traceId, SendMessage response) {
         String query = messageText.substring(10).trim();
