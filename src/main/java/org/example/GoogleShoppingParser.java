@@ -25,6 +25,7 @@ public class GoogleShoppingParser {
         WebDriver driver = new ChromeDriver(options);
         StringBuilder result = new StringBuilder();
 
+
         try {
             driver.get("https://www.google.com/search?tbm=shop&q=" + query);
 
