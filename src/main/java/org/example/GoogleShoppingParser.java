@@ -11,7 +11,7 @@ import java.time.Duration;
 import java.util.List;
 
 public class GoogleShoppingParser {
-    public static void main(String[] args) {
+    public String parseGoogleShopping(String query) {
         WebDriverManager.chromedriver().setup();
 
         ChromeOptions options = new ChromeOptions();
@@ -22,15 +22,13 @@ public class GoogleShoppingParser {
         options.setExperimentalOption("excludeSwitches", new String[]{"enable-automation"});
 
         WebDriver driver = new ChromeDriver(options);
-        try {
-            driver.get("https://www.google.com/search?tbm=shop&q=смартфон");
+        StringBuilder result = new StringBuilder();
 
-            // Debugging output
-            System.out.println("Page title: " + driver.getTitle());
+        try {
+            driver.get("https://www.google.com/search?tbm=shop&q=" + query);
 
             WebDriverWait wait = new WebDriverWait(driver, Duration.ofSeconds(30));
 
-            // Updated selectors based on the provided HTML
             String[] containerSelectors = {
                     "div[jsname='dQK82e']",
                     "div[class='MtXiu mZ9c3d wYFOId M919M W5CKGc wTrwWd']"
@@ -40,12 +38,10 @@ public class GoogleShoppingParser {
 
             for (String selector : containerSelectors) {
                 try {
-                    System.out.println("Trying selector: " + selector);
                     firstItem = wait.until(ExpectedConditions.presenceOfElementLocated(By.cssSelector(selector)));
-                    System.out.println("Found element with selector: " + selector);
                     break;
                 } catch (TimeoutException e) {
-                    System.out.println("Element not found with selector: " + selector);
+                    result.append("Element not found with selector: ").append(selector).append("\n");
                 }
             }
 
@@ -53,27 +49,26 @@ public class GoogleShoppingParser {
                 throw new RuntimeException("Не удалось найти контейнер товаров");
             }
 
-            // Use the correct selectors to find all product items
             List<WebElement> items = driver.findElements(By.cssSelector("div[jsname='dQK82e']"));
-            System.out.println("Найдено товаров: " + items.size());
+            result.append("Найдено товаров: ").append(items.size()).append("\n");
 
             for (WebElement item : items) {
                 try {
-                    // Extract title and price using the correct selectors
                     String title = item.findElement(By.cssSelector("div.gkQHve.SsM98d.RmEs5b")).getText();
                     String price = item.findElement(By.cssSelector("span.lmQWe")).getText();
-                    System.out.println("Название: " + title);
-                    System.out.println("Цена: " + price);
-                    System.out.println("------");
+                    result.append("Название: ").append(title).append("\n");
+                    result.append("Цена: ").append(price).append("\n");
+                    result.append("------\n");
                 } catch (Exception e) {
-                    System.out.println("Ошибка парсинга товара: " + e.getMessage());
+                    result.append("Ошибка парсинга товара: ").append(e.getMessage()).append("\n");
                 }
             }
         } catch (Exception e) {
-            System.err.println("Критическая ошибка: ");
-            e.printStackTrace();
+            result.append("Критическая ошибка: ").append(e.getMessage()).append("\n");
         } finally {
             driver.quit();
         }
+
+        return result.toString();
     }
 }
