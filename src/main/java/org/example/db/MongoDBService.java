@@ -24,6 +24,7 @@ public class MongoDBService {
     private final MongoCollection<Document> commandMetricsCollection;
     private final MongoCollection<Document> errorLogsCollection;
     private final MongoCollection<Document> apiDataCollection;
+    private final MongoCollection<Document> userLogsCollection;
 
     // Supported marketplaces
     public enum Marketplace {
@@ -47,6 +48,7 @@ public class MongoDBService {
         this.commandMetricsCollection = saleBotInfoDB.getCollection("command_metrics");
         this.errorLogsCollection = saleBotInfoDB.getCollection("error_logs");
         this.apiDataCollection = saleBotInfoDB.getCollection("api_data");
+        this.userLogsCollection = saleBotDB.getCollection("user_logs");
 
         // Create indexes
         createIndexes();
@@ -75,6 +77,21 @@ public class MongoDBService {
         apiDataCollection.createIndex(new Document("timestamp", -1));
         apiDataCollection.createIndex(new Document("processed", 1));
         apiDataCollection.createIndex(new Document("response.metadata.catalog_type", 1));
+    }
+
+    public void logUserAction(long userId, String username, String firstName,
+                              String lastName, String action, String query, String message) {
+        Document logDoc = new Document()
+                .append("userId", userId)
+                .append("username", username)
+                .append("firstName", firstName)
+                .append("lastName", lastName)
+                .append("action", action)
+                .append("query", query)
+                .append("message", message)
+                .append("timestamp", new Date());
+
+        userLogsCollection.insertOne(logDoc);
     }
 
     // Log API request event
