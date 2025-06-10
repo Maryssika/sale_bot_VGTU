@@ -11,6 +11,7 @@ import java.time.Duration;
 import java.util.List;
 
 public class GoogleShoppingParser {
+
     public String parseGoogleShopping(String query) {
         WebDriverManager.chromedriver().setup();
 
@@ -29,27 +30,10 @@ public class GoogleShoppingParser {
 
             WebDriverWait wait = new WebDriverWait(driver, Duration.ofSeconds(30));
 
-            String[] containerSelectors = {
-                    "div[jsname='dQK82e']",
-                    "div[class='MtXiu mZ9c3d wYFOId M919M W5CKGc wTrwWd']"
-            };
+            // Wait for the presence of any item container
+            wait.until(ExpectedConditions.presenceOfElementLocated(By.cssSelector("div[jsname='dQK82e'], div[class*='Ez5pwe']")));
 
-            WebElement firstItem = null;
-
-            for (String selector : containerSelectors) {
-                try {
-                    firstItem = wait.until(ExpectedConditions.presenceOfElementLocated(By.cssSelector(selector)));
-                    break;
-                } catch (TimeoutException e) {
-                    result.append("Element not found with selector: ").append(selector).append("\n");
-                }
-            }
-
-            if (firstItem == null) {
-                throw new RuntimeException("Не удалось найти контейнер товаров");
-            }
-
-            List<WebElement> items = driver.findElements(By.cssSelector("div[jsname='dQK82e']"));
+            List<WebElement> items = driver.findElements(By.cssSelector("div[jsname='dQK82e'], div[class*='Ez5pwe']"));
             result.append("Найдено товаров: ").append(items.size()).append("\n");
 
             // Limit the loop to the first 10 items
@@ -57,13 +41,17 @@ public class GoogleShoppingParser {
             for (int i = 0; i < itemCount; i++) {
                 WebElement item = items.get(i);
                 try {
-                    String title = item.findElement(By.cssSelector("div.gkQHve.SsM98d.RmEs5b")).getText();
-                    String price = item.findElement(By.cssSelector("span.lmQWe")).getText();
+                    // Extract title
+                    String title = item.findElement(By.cssSelector("div[class*='gkQHve']")).getText();
+
+                    // Extract price
+                    String price = item.findElement(By.cssSelector("span[class*='lmQWe']")).getText();
+
                     result.append("Название: ").append(title).append("\n");
                     result.append("Цена: ").append(price).append("\n");
                     result.append("------\n");
-                } catch (Exception e) {
-                    result.append("Ошибка парсинга товара: ").append(e.getMessage()).append("\n");
+                } catch (NoSuchElementException e) {
+                    result.append("Не удалось найти элементы для товара ").append(i + 1).append(": ").append(e.getMessage()).append("\n");
                 }
             }
         } catch (Exception e) {
