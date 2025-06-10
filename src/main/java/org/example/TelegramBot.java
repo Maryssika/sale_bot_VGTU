@@ -1,6 +1,9 @@
 package org.example;
 
 import org.example.db.MongoDBService;
+import org.example.forecast.ForecastService;
+import org.example.forecast.ForecastFormatter;
+import org.example.forecast.ForecastResult;
 import org.example.wb.WildberriesApiClient;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
@@ -13,89 +16,136 @@ import java.util.UUID;
 public class TelegramBot extends TelegramLongPollingBot {
     private final WildberriesApiClient wbApiClient;
     private final MongoDBService mongoDBService;
+    private final ForecastService forecastService;
 
-    // Конструктор для инициализации WB и MongoDB
     public TelegramBot() {
         this.wbApiClient = new WildberriesApiClient();
         this.mongoDBService = new MongoDBService();
+        this.forecastService = new ForecastService(mongoDBService);
     }
 
-    // Метод, который вызывается при каждом новом сообщении от пользователя
     @Override
     public void onUpdateReceived(Update update) {
-        // Проверяем, что сообщение существует и содержит текст
         if (update.hasMessage() && update.getMessage().hasText()) {
-            long startTime = System.currentTimeMillis(); // метка начала обработки
-            String traceId = UUID.randomUUID().toString(); // уникальный ID для отслеживания
-            long chatId = update.getMessage().getChatId(); // ID чата пользователя
-            String messageText = update.getMessage().getText(); // текст сообщения
+            long startTime = System.currentTimeMillis();
+            String traceId = UUID.randomUUID().toString();
+            long chatId = update.getMessage().getChatId();
+            String messageText = update.getMessage().getText();
 
-            // Логируем факт получения сообщения
-            mongoDBService.logCommand("message_received", mongoDBService.createMetadata(traceId, chatId)
-                    .with("message", messageText)
-                    .build());
+            mongoDBService.logCommand("message_received",
+                    mongoDBService.createMetadata(traceId, chatId)
+                            .with("message", messageText)
+                            .build());
 
             SendMessage response = new SendMessage();
             response.setChatId(String.valueOf(chatId));
 
             try {
-                // Обработка команды поиска
-                 if (messageText.startsWith("/search ")) {
-    String query = messageText.substring(8).trim();
-    if (!query.isEmpty()) {
-        String searchResult = wbApiClient.searchProduct(query);
-        response.setText(searchResult);
-        mongoDBService.logSearchQuery(query, traceId); // добавили логирование
-    } else {
-        response.setText("Введите поисковый запрос после команды /search");
-    }
-} else if (messageText.startsWith("/cacheinfo ")) {
-    // аналогично для /cacheinfo
-} else {
-    response.setText("Команды:\n/search [запрос] — поиск товаров\n/cacheinfo [запрос] — информация о кэше");
-}
-                // Отправка ответа пользователю
+                if (messageText.startsWith("/search ")) {
+                    handleSearchCommand(messageText, chatId, traceId, response);
+                } else if (messageText.startsWith("/cacheinfo ")) {
+                    handleCacheInfoCommand(messageText, chatId, traceId, response);
+                } else if (messageText.startsWith("/forecast ")) {
+                    handleForecastCommand(messageText, chatId, traceId, response);
+                } else if (messageText.equals("/start")) {
+                    response.setText("Добро пожаловать! Используйте команды:\n" +
+                            "/search [запрос] - поиск товаров\n" +
+                            "/cacheinfo [запрос] - информация о кэше\n"+
+                            "/forecast [запрос] - прогноз цен на 7 дней");
+                } else {
+                    response.setText("Неизвестная команда. Доступные команды:\n" +
+                            "/search [запрос] - поиск товаров\n" +
+                            "/cacheinfo [запрос] - информация о кэше\n"+
+                            "/forecast [запрос] - прогноз цен на 7 дней");
+                }
+
                 execute(response);
 
-                // Логируем успешную отправку ответа с временем и размером
-                mongoDBService.logCommand("response_sent", mongoDBService.createMetadata(traceId, chatId)
-                        .with("responseTimeMs", System.currentTimeMillis() - startTime)
-                        .with("responseLength", response.getText().length())
-                        .build());
+                mongoDBService.logCommand("response_sent",
+                        mongoDBService.createMetadata(traceId, chatId)
+                                .with("responseTimeMs", System.currentTimeMillis() - startTime)
+                                .with("responseLength", response.getText().length())
+                                .build());
             } catch (Exception e) {
                 handleError(chatId, traceId, response, e);
             }
         }
     }
 
-    // Метод обработки команды /search
-    private void handleSearchCommand(String messageText, long chatId, String traceId, SendMessage response) {
-        String query = messageText.substring(8).trim();
+    private void handleForecastCommand(String messageText, long chatId, String traceId, SendMessage response) {
+        String query = messageText.substring(10).trim();
         if (query.isEmpty()) {
-            // Если строка пуста — отправляем предупреждение и логируем
-            response.setText("Введите поисковый запрос после команды /search");
-            mongoDBService.logCommand("empty_search_query", mongoDBService.createMetadata(traceId, chatId).build());
+            response.setText("Введите поисковый запрос после команды /forecast");
+            mongoDBService.logCommand("empty_forecast_query",
+                    mongoDBService.createMetadata(traceId, chatId).build());
             return;
         }
 
-        // Логируем команду поиска с введённым запросом
-        mongoDBService.logCommand("search_command", mongoDBService.createMetadata(traceId, chatId)
-                .with("query", query)
-                .build());
+        mongoDBService.logCommand("forecast_command",
+                mongoDBService.createMetadata(traceId, chatId)
+                        .with("query", query)
+                        .build());
+
+        try {
+            // Генерируем прогноз на 7 дней
+            ForecastResult forecast = forecastService.generateForecast(query, 7);
+            String forecastText = ForecastFormatter.formatForecast(forecast);
+            response.setText(forecastText);
+
+            mongoDBService.logCommand("forecast_success",
+                    mongoDBService.createMetadata(traceId, chatId)
+                            .with("query", query)
+                            .with("forecastDays", 7)
+                            .build());
+        } catch (Exception e) {
+            response.setText("Ошибка при генерации прогноза. Попробуйте позже.");
+            mongoDBService.logError("forecast_error", "forecast_generation_failed", e,
+                    mongoDBService.createMetadata(traceId, chatId)
+                            .with("query", query)
+                            .build());
+        }
+    }
+
+
+    private void handleSearchCommand(String messageText, long chatId, String traceId, SendMessage response) {
+        String query = messageText.substring(8).trim();
+        if (query.isEmpty()) {
+            response.setText("Введите поисковый запрос после команды /search");
+            mongoDBService.logCommand("empty_search_query",
+                    mongoDBService.createMetadata(traceId, chatId).build());
+            return;
+        }
+
+        mongoDBService.logCommand("search_command",
+                mongoDBService.createMetadata(traceId, chatId)
+                        .with("query", query)
+                        .build());
 
         String searchResult = wbApiClient.searchProduct(query, chatId, traceId);
         response.setText(searchResult);
+
+        // Use the newly added logSearchQuery method
+        mongoDBService.logSearchQuery(query, traceId);
     }
 
-    // Метод обработки неизвестных команд
-    private void handleOtherCommand(String messageText, long chatId, String traceId, SendMessage response) {
-        response.setText("Используйте команду /search [запрос] для поиска товаров");
-        mongoDBService.logCommand("unknown_command", mongoDBService.createMetadata(traceId, chatId)
-                .with("message", messageText)
-                .build());
+    private void handleCacheInfoCommand(String messageText, long chatId, String traceId, SendMessage response) {
+        String query = messageText.substring(11).trim();
+        if (query.isEmpty()) {
+            response.setText("Введите запрос после команды /cacheinfo");
+            mongoDBService.logCommand("empty_cacheinfo_query",
+                    mongoDBService.createMetadata(traceId, chatId).build());
+            return;
+        }
+
+        String cacheInfo = wbApiClient.getCacheInfo(query);
+        response.setText(cacheInfo);
+
+        mongoDBService.logCommand("cacheinfo_requested",
+                mongoDBService.createMetadata(traceId, chatId)
+                        .with("query", query)
+                        .build());
     }
 
-    // Метод обработки исключений
     private void handleError(long chatId, String traceId, SendMessage response, Exception e) {
         response.setText("Произошла ошибка при обработке запроса");
         try {
@@ -104,11 +154,11 @@ public class TelegramBot extends TelegramLongPollingBot {
             ex.printStackTrace();
         }
 
-        // Логируем ошибку в MongoDB с трассировкой
-        mongoDBService.logCommand("processing_error", mongoDBService.createMetadata(traceId, chatId)
-                .with("error", e.getMessage())
-                .with("stackTrace", Arrays.toString(e.getStackTrace()))
-                .build());
+        mongoDBService.logError("processing_error", "telegram_bot_error", e,
+                mongoDBService.createMetadata(traceId, chatId)
+                        .with("error", e.getMessage())
+                        .with("stackTrace", Arrays.toString(e.getStackTrace()))
+                        .build());
     }
 
     @Override
