@@ -8,6 +8,7 @@ import org.example.wb.WildberriesApiClient;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.Update;
+import org.telegram.telegrambots.meta.api.objects.User;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
 import java.util.Arrays;
@@ -35,11 +36,33 @@ public class TelegramBot extends TelegramLongPollingBot {
             String traceId = UUID.randomUUID().toString();
             long chatId = update.getMessage().getChatId();
             String messageText = update.getMessage().getText();
+            User user = update.getMessage().getFrom();
 
-            mongoDBService.logCommand("message_received",
-                    mongoDBService.createMetadata(traceId, chatId)
-                            .with("message", messageText)
-                            .build());
+            // Определяем тип действия
+            String action = "command";
+            String query = "";
+
+            if (messageText.startsWith("/search ")) {
+                action = "search";
+                query = messageText.substring(8).trim();
+            } else if (messageText.startsWith("/cacheinfo ")) {
+                action = "cache_info";
+                query = messageText.substring(11).trim();
+            } else if (messageText.startsWith("/forecast ")) {
+                action = "forecast";
+                query = messageText.substring(10).trim();
+            }
+
+            // Логируем действие пользователя
+            mongoDBService.logUserAction(
+                    user.getId(),
+                    user.getUserName() != null ? user.getUserName() : "unknown",
+                    user.getFirstName() != null ? user.getFirstName() : "unknown",
+                    user.getLastName() != null ? user.getLastName() : "unknown",
+                    action,
+                    query,
+                    messageText
+            );
 
             SendMessage response = new SendMessage();
             response.setChatId(String.valueOf(chatId));
@@ -69,13 +92,14 @@ public class TelegramBot extends TelegramLongPollingBot {
 
                 execute(response);
 
-                mongoDBService.logCommand("response_sent",
-                        mongoDBService.createMetadata(traceId, chatId)
-                                .with("responseTimeMs", System.currentTimeMillis() - startTime)
-                                .with("responseLength", response.getText().length())
-                                .build());
             } catch (Exception e) {
-                handleError(chatId, traceId, response, e);
+                e.printStackTrace();
+                response.setText("Произошла ошибка при обработке запроса. Попробуйте позже.");
+                try {
+                    execute(response);
+                } catch (TelegramApiException ex) {
+                    ex.printStackTrace();
+                }
             }
         }
     }
@@ -137,7 +161,7 @@ public class TelegramBot extends TelegramLongPollingBot {
     private void handleSearchCommand(String messageText, long chatId, String traceId, SendMessage response) {
         String query = messageText.substring(8).trim();
         if (query.isEmpty()) {
-            response.setText("Введите поисковый запрос после команды /wb");
+            response.setText("Введите поисковый запрос после команды /search");
             mongoDBService.logCommand("empty_search_query",
                     mongoDBService.createMetadata(traceId, chatId).build());
             return;
