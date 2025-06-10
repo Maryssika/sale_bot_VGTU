@@ -52,7 +52,10 @@ public class GoogleShoppingParser {
             List<WebElement> items = driver.findElements(By.cssSelector("div[jsname='dQK82e']"));
             result.append("Найдено товаров: ").append(items.size()).append("\n");
 
-            for (WebElement item : items) {
+            // Limit the loop to the first 10 items
+            int itemCount = Math.min(items.size(), 10);
+            for (int i = 0; i < itemCount; i++) {
+                WebElement item = items.get(i);
                 try {
                     String title = item.findElement(By.cssSelector("div.gkQHve.SsM98d.RmEs5b")).getText();
                     String price = item.findElement(By.cssSelector("span.lmQWe")).getText();

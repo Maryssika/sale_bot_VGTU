@@ -45,7 +45,7 @@ public class TelegramBot extends TelegramLongPollingBot {
             response.setChatId(String.valueOf(chatId));
 
             try {
-                if (messageText.startsWith("/search ")) {
+                if (messageText.startsWith("/wb ")) {
                     handleSearchCommand(messageText, chatId, traceId, response);
                 } else if (messageText.startsWith("/cacheinfo ")) {
                     handleCacheInfoCommand(messageText, chatId, traceId, response);
@@ -55,13 +55,13 @@ public class TelegramBot extends TelegramLongPollingBot {
                     handleGoogleShoppingCommand(messageText, chatId, traceId, response);
                 } else if (messageText.equals("/start")) {
                     response.setText("Добро пожаловать! Используйте команды:\n" +
-                            "/search [запрос] - поиск товаров\n" +
+                            "/wb [запрос] - поиск товаров\n" +
                             "/cacheinfo [запрос] - информация о кэше\n" +
                             "/forecast [запрос] - прогноз цен на 7 дней\n" +
                             "/google [запрос] - поиск товаров в Google Shopping");
                 } else {
                     response.setText("Неизвестная команда. Доступные команды:\n" +
-                            "/search [запрос] - поиск товаров\n" +
+                            "/wb [запрос] - поиск товаров\n" +
                             "/cacheinfo [запрос] - информация о кэше\n" +
                             "/forecast [запрос] - прогноз цен на 7 дней\n" +
                             "/google [запрос] - поиск товаров в Google Shopping");
@@ -137,7 +137,7 @@ public class TelegramBot extends TelegramLongPollingBot {
     private void handleSearchCommand(String messageText, long chatId, String traceId, SendMessage response) {
         String query = messageText.substring(8).trim();
         if (query.isEmpty()) {
-            response.setText("Введите поисковый запрос после команды /search");
+            response.setText("Введите поисковый запрос после команды /wb");
             mongoDBService.logCommand("empty_search_query",
                     mongoDBService.createMetadata(traceId, chatId).build());
             return;
