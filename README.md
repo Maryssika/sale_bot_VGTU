@@ -91,12 +91,12 @@ Beta: Основные функции работают, но возможны д
 
 # Open source licensing info
 
-- [CHANGELOG](docs/CHANGELOG.md)
-- [CODE_OF_CONDUCT.md](docs/CODE_OF_CONDUCT.md)
-- [CONTRIBUTING.md](docs/CONTRIBUTING.md)
-- [INSTALL.md](docs/INSTALL.md)
+- [CHANGELOG](CHANGELOG.md)
+- [CODE_OF_CONDUCT](CODE_OF_CONDUCT.md)
+- [CONTRIBUTING](CONTRIBUTING.md)
+- [INSTALL](INSTALL.md)
 - [LICENSE](LICENSE)
-- [TERMS.md](docs/TERMS.md) 
+- [TERMS](TERMS.md) 
 
 
 # Получение справочной информации
