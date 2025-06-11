@@ -89,6 +89,16 @@ Beta: Основные функции работают, но возможны д
 
 - Прогнозирование цен основано на упрощенной логике.
 
+# Open source licensing info
+
+- [CHANGELOG](docs/CHANGELOG.md)
+- [CODE_OF_CONDUCT.md](docs/CODE_OF_CONDUCT.md)
+- [CONTRIBUTING.md](docs/CONTRIBUTING.md)
+- [INSTALL.md](docs/INSTALL.md)
+- [LICENSE](LICENSE)
+- [TERMS.md](docs/TERMS.md) 
+
+
 # Получение справочной информации
 Для вопросов и предложений создавайте issues в репозитории проекта.
 
