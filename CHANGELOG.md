@@ -14,7 +14,7 @@
   - Создан сервер для MongoDB (https://github.com/Maryssika/sale_bot_VGTU/pull/16)
   - Сбор данных пользователя и логирование всех его команд в MongoDB (https://github.com/Maryssika/sale_bot_VGTU/pull/25)
   - График цен маркетплейсов за определённый промежуток времени и их сравнение ()
-  - Подключение к гугл покупкам ()
+  - Подключение к гугл покупкам (https://github.com/Maryssika/sale_bot_VGTU/pull/30)
   - Создание метрик путем логирования запросов, результатов и ошибок в MongoDB для последующего анализа (https://github.com/Maryssika/sale_bot_VGTU/pull/24)
 - Изменено:
   - Nothing.
