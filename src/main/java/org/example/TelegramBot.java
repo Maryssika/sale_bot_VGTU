@@ -8,8 +8,10 @@ import org.example.wb.WildberriesApiClient;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.Update;
+import org.telegram.telegrambots.meta.api.objects.User;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
-
+import java.io.InputStream;
+import java.util.Properties;
 import java.util.Arrays;
 import java.util.UUID;
 
@@ -17,11 +19,13 @@ public class TelegramBot extends TelegramLongPollingBot {
     private final WildberriesApiClient wbApiClient;
     private final MongoDBService mongoDBService;
     private final ForecastService forecastService;
+    private final GoogleShoppingParser googleShoppingParser;
 
     public TelegramBot() {
         this.wbApiClient = new WildberriesApiClient();
         this.mongoDBService = new MongoDBService();
         this.forecastService = new ForecastService(mongoDBService);
+        this.googleShoppingParser = new GoogleShoppingParser();
     }
 
     @Override
@@ -31,46 +35,112 @@ public class TelegramBot extends TelegramLongPollingBot {
             String traceId = UUID.randomUUID().toString();
             long chatId = update.getMessage().getChatId();
             String messageText = update.getMessage().getText();
+            User user = update.getMessage().getFrom();
 
-            mongoDBService.logCommand("message_received",
-                    mongoDBService.createMetadata(traceId, chatId)
-                            .with("message", messageText)
-                            .build());
+            // Определяем тип действия
+            String action = "command";
+            String query = "";
+
+            if (messageText.startsWith("/wb ")) {
+                action = "search";
+                query = messageText.substring(4).trim();
+            } else if (messageText.startsWith("/cacheinfo ")) {
+                action = "cache_info";
+                query = messageText.substring(11).trim();
+            } else if (messageText.startsWith("/forecast ")) {
+                action = "forecast";
+                query = messageText.substring(10).trim();
+            }
+
+            // Логируем действие пользователя
+            mongoDBService.logUserAction(
+                    user.getId(),
+                    user.getUserName() != null ? user.getUserName() : "unknown",
+                    user.getFirstName() != null ? user.getFirstName() : "unknown",
+                    user.getLastName() != null ? user.getLastName() : "unknown",
+                    action,
+                    query,
+                    messageText
+            );
 
             SendMessage response = new SendMessage();
             response.setChatId(String.valueOf(chatId));
 
             try {
-                if (messageText.startsWith("/search ")) {
+                if (messageText.equals("/wb")) {
+                    // Обработка случая, когда пользователь просто нажал /wb
+                    response.setText("Введите название товара для поиска на Wildberries в формате:\n\n/wb [название товара]\n\nНапример:\n/wb пиджак");
+                    execute(response);
+                    return;
+                } else if (messageText.equals("/google")) {
+                    // Обработка случая, когда пользователь просто нажал /google
+                    response.setText("Введите название товара для поиска на Google Shopping в формате:\n\n/google [название товара]\n\nНапример:\n/google пиджак");
+                    execute(response);
+                    return;
+                } else if (messageText.equals("/cacheinfo")) {
+                    // Обработка случая, когда пользователь просто нажал /cacheinfo
+                    response.setText("Введите название товара для поиска для получения информация о кэше в формате:\n\n/cacheinfo [название товара]\n\nНапример:\n/cacheinfo пиджак");
+                    execute(response);
+                    return;
+                } else if (messageText.equals("/forecast")) {
+                    // Обработка случая, когда пользователь просто нажал /forecast
+                    response.setText("Введите название товара для прогноза цен на 7 дней в формате:\n\n/forecast [название товара]\n\nНапример:\n/forecast пиджак");
+                    execute(response);
+                    return;
+                } else if (messageText.startsWith("/wb ")) {
                     handleSearchCommand(messageText, chatId, traceId, response);
                 } else if (messageText.startsWith("/cacheinfo ")) {
                     handleCacheInfoCommand(messageText, chatId, traceId, response);
                 } else if (messageText.startsWith("/forecast ")) {
                     handleForecastCommand(messageText, chatId, traceId, response);
+                } else if (messageText.startsWith("/google ")) {
+                    handleGoogleShoppingCommand(messageText, chatId, traceId, response);
                 } else if (messageText.equals("/start")) {
                     response.setText("Добро пожаловать! Используйте команды:\n" +
-                            "/search [запрос] - поиск товаров\n" +
-                            "/cacheinfo [запрос] - информация о кэше\n"+
-                            "/forecast [запрос] - прогноз цен на 7 дней");
+                            "/wb - поиск товаров на Wildberries\n" +
+                            "/cacheinfo [запрос] - информация о кэше\n" +
+                            "/forecast [запрос] - прогноз цен на 7 дней\n" +
+                            "/google [запрос] - поиск товаров в Google Shopping");
                 } else {
                     response.setText("Неизвестная команда. Доступные команды:\n" +
-                            "/search [запрос] - поиск товаров\n" +
-                            "/cacheinfo [запрос] - информация о кэше\n"+
-                            "/forecast [запрос] - прогноз цен на 7 дней");
+                            "/wb - поиск товаров\n" +
+                            "/cacheinfo [запрос] - информация о кэше\n" +
+                            "/forecast [запрос] - прогноз цен на 7 дней\n" +
+                            "/google [запрос] - поиск товаров в Google Shopping");
                 }
 
                 execute(response);
 
-                mongoDBService.logCommand("response_sent",
-                        mongoDBService.createMetadata(traceId, chatId)
-                                .with("responseTimeMs", System.currentTimeMillis() - startTime)
-                                .with("responseLength", response.getText().length())
-                                .build());
             } catch (Exception e) {
-                handleError(chatId, traceId, response, e);
+                e.printStackTrace();
+                response.setText("Произошла ошибка при обработке запроса. Попробуйте позже.");
+                try {
+                    execute(response);
+                } catch (TelegramApiException ex) {
+                    ex.printStackTrace();
+                }
             }
         }
     }
+
+    private void handleGoogleShoppingCommand(String messageText, long chatId, String traceId, SendMessage response) {
+        String query = messageText.substring(8).trim();
+        if (query.isEmpty()) {
+            response.setText("Введите поисковый запрос после команды /google");
+            mongoDBService.logCommand("empty_google_query",
+                    mongoDBService.createMetadata(traceId, chatId).build());
+            return;
+        }
+
+        mongoDBService.logCommand("google_shopping_command",
+                mongoDBService.createMetadata(traceId, chatId)
+                        .with("query", query)
+                        .build());
+
+        String searchResult = googleShoppingParser.parseGoogleShopping(query);
+        response.setText(searchResult);
+    }
+
 
     private void handleForecastCommand(String messageText, long chatId, String traceId, SendMessage response) {
         String query = messageText.substring(10).trim();
@@ -108,9 +178,11 @@ public class TelegramBot extends TelegramLongPollingBot {
 
 
     private void handleSearchCommand(String messageText, long chatId, String traceId, SendMessage response) {
-        String query = messageText.substring(8).trim();
+        // Изменяем способ извлечения запроса
+        String query = messageText.replaceFirst("/wb\\s+", "").trim();
+
         if (query.isEmpty()) {
-            response.setText("Введите поисковый запрос после команды /search");
+            response.setText("Введите поисковый запрос после команды /wb");
             mongoDBService.logCommand("empty_search_query",
                     mongoDBService.createMetadata(traceId, chatId).build());
             return;
@@ -124,7 +196,6 @@ public class TelegramBot extends TelegramLongPollingBot {
         String searchResult = wbApiClient.searchProduct(query, chatId, traceId);
         response.setText(searchResult);
 
-        // Use the newly added logSearchQuery method
         mongoDBService.logSearchQuery(query, traceId);
     }
 
@@ -168,6 +239,13 @@ public class TelegramBot extends TelegramLongPollingBot {
 
     @Override
     public String getBotToken() {
-        return "7472746068:AAG-Uj1CvFFtLiO9r8agC4o5dsGx1XUeZ3I";
+        try (InputStream input = getClass().getClassLoader().getResourceAsStream("config.properties")) {
+            Properties prop = new Properties();
+            prop.load(input);
+            return prop.getProperty("bot.token");
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            throw new RuntimeException("Failed to load bot token from config");
+        }
     }
 }
