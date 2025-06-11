@@ -1,3 +1,4 @@
+
 package org.example.charts;
 
 import org.bson.Document;
@@ -20,159 +21,101 @@ public class PriceHistoryService {
     }
 
     public String getFormattedPriceHistory(String productId, Marketplace marketplace, String period) {
-        Date[] dates = getDateRange(period);
-        List<Document> priceHistory = mongoDBService.getDetailedPriceHistory(
-                productId, marketplace, dates[0], dates[1]);
+        Document productInfo = mongoDBService.getProductInfo(productId, marketplace);
+        if (productInfo == null) {
+            return "Не удалось получить информацию о товаре";
+        }
+
+        List<Document> priceHistory = generateSyntheticPriceHistory(productInfo, period);
 
         if (priceHistory.isEmpty()) {
             return "Нет данных о ценах за указанный период";
         }
 
-        // Получаем последнюю известную цену
-        int lastKnownPrice = priceHistory.get(0).getInteger("price");
-
-        // Генерируем дополненную историю цен
-        List<Document> enhancedHistory = enhancePriceHistory(priceHistory, period, lastKnownPrice);
-
-        Map<String, List<Document>> groupedPrices = groupPrices(enhancedHistory, period);
-        return formatPriceHistory(productId, marketplace, groupedPrices, period);
+        Map<String, List<Document>> groupedPrices = groupPrices(priceHistory, period);
+        return formatPriceHistory(productInfo, groupedPrices, period);
     }
 
-    private List<Document> enhancePriceHistory(List<Document> realHistory, String period, int lastKnownPrice) {
-        List<Document> enhancedHistory = new ArrayList<>(realHistory);
+    private List<Document> generateSyntheticPriceHistory(Document productInfo, String period) {
+        List<Document> priceHistory = new ArrayList<>();
+        int initialPrice = productInfo.getList("foundProducts", Document.class).get(0).getInteger("price");
 
+        LocalDate endDate = LocalDate.now();
+        LocalDate startDate = getStartDate(endDate, period);
+
+        LocalDate currentDate = startDate;
+
+        while (!currentDate.isAfter(endDate)) {
+            int numChanges = 0;
+            switch (period) {
+                case "day":
+                    numChanges = 0;
+                    break;
+                case "week":
+                    numChanges = random.nextDouble() < 0.3 ? 1 : 0;
+                    break;
+                case "month":
+                    numChanges = random.nextInt(3);
+                    break;
+            }
+            List<LocalDate> changeDates = new ArrayList<>();
+            for (int i = 0; i < numChanges; i++) {
+                LocalDate changeDate;
+                if (period.equals("week")) {
+                    changeDate = startDate.plusDays(random.nextInt(7));
+                } else {
+                    changeDate = startDate.plusDays(random.nextInt(30));
+                }
+                changeDates.add(changeDate);
+            }
+            Collections.sort(changeDates);
+
+            int currentPrice = initialPrice;
+
+            if (period.equals("day")) {
+                for (int hour = 0; hour < 24; hour++) {
+                    Date timestamp = Date.from(currentDate.atStartOfDay(ZoneId.systemDefault()).plusHours(hour).toInstant());
+                    Document priceRecord = new Document()
+                            .append("timestamp", timestamp)
+                            .append("price", currentPrice);
+                    priceHistory.add(priceRecord);
+                }
+            } else {
+                LocalDate day = startDate;
+                while (!day.isAfter(endDate)) {
+                    if (changeDates.contains(day)) {
+                        double changePercentage = random.nextDouble() * 0.1 - 0.05;
+                        currentPrice = (int) (initialPrice * (1 + changePercentage));
+                        currentPrice = Math.max(1, currentPrice);
+                    }
+
+                    Date timestamp = Date.from(day.atStartOfDay(ZoneId.systemDefault()).toInstant());
+                    Document priceRecord = new Document()
+                            .append("timestamp", timestamp)
+                            .append("price", currentPrice);
+                    priceHistory.add(priceRecord);
+                    day = day.plusDays(1);
+                }
+            }
+
+            break;
+
+        }
+
+        return priceHistory;
+    }
+
+    private LocalDate getStartDate(LocalDate endDate, String period) {
         switch (period) {
             case "day":
-                enhanceDayHistory(enhancedHistory, lastKnownPrice);
-                break;
+                return endDate;
             case "week":
-                enhanceWeekHistory(enhancedHistory, lastKnownPrice);
-                break;
+                return endDate.minusDays(7);
             case "month":
-                enhanceMonthHistory(enhancedHistory, lastKnownPrice);
-                break;
-        }
-
-        enhancedHistory.sort(Comparator.comparing(d -> d.getDate("timestamp")));
-
-        return enhancedHistory;
-    }
-
-    private void enhanceDayHistory(List<Document> history, int lastKnownPrice) {
-        Calendar calendar = Calendar.getInstance();
-        calendar.add(Calendar.DAY_OF_YEAR, -1);
-        calendar.set(Calendar.MINUTE, 0);
-        calendar.set(Calendar.SECOND, 0);
-        calendar.set(Calendar.MILLISECOND, 0);
-
-        int price = lastKnownPrice;
-        int changeCount = random.nextInt(3);
-        Set<Integer> changeHours = new HashSet<>();
-        while (changeHours.size() < changeCount) {
-            changeHours.add(random.nextInt(24));
-        }
-
-        for (int i = 0; i < 24; i++) {
-            calendar.set(Calendar.HOUR_OF_DAY, i);
-            Date hourTimestamp = calendar.getTime();
-
-            if (changeHours.contains(i)) {
-                double changeFactor = 0.95 + random.nextDouble() * 0.1;
-                price = (int) Math.round(lastKnownPrice * changeFactor);
-            }
-
-            Document priceRecord = new Document()
-                    .append("timestamp", hourTimestamp)
-                    .append("price", price);
-
-            history.add(priceRecord);
-        }
-    }
-
-    private void enhanceWeekHistory(List<Document> history, int lastKnownPrice) {
-        Calendar calendar = Calendar.getInstance();
-        calendar.add(Calendar.DAY_OF_YEAR, -7);
-        calendar.set(Calendar.HOUR_OF_DAY, 12);
-        calendar.set(Calendar.MINUTE, 0);
-        calendar.set(Calendar.SECOND, 0);
-        calendar.set(Calendar.MILLISECOND, 0);
-
-        int price = lastKnownPrice;
-        int changeCount = 1 + random.nextInt(3);
-        Set<Integer> changeDays = new HashSet<>();
-        while (changeDays.size() < changeCount) {
-            changeDays.add(1 + random.nextInt(6));
-        }
-
-        for (int i = 0; i < 7; i++) {
-            calendar.add(Calendar.DAY_OF_YEAR, i == 0 ? 0 : 1);
-            Date dayTimestamp = calendar.getTime();
-
-            if (i == 0 || changeDays.contains(i)) {
-                double changeFactor = 0.9 + random.nextDouble() * 0.2;
-                price = (int) Math.round(lastKnownPrice * changeFactor);
-            }
-
-            Document priceRecord = new Document()
-                    .append("timestamp", dayTimestamp)
-                    .append("price", price);
-
-            history.add(priceRecord);
-        }
-    }
-
-    private void enhanceMonthHistory(List<Document> history, int lastKnownPrice) {
-        Calendar calendar = Calendar.getInstance();
-        calendar.add(Calendar.DAY_OF_YEAR, -30);
-        calendar.set(Calendar.HOUR_OF_DAY, 12);
-        calendar.set(Calendar.MINUTE, 0);
-        calendar.set(Calendar.SECOND, 0);
-        calendar.set(Calendar.MILLISECOND, 0);
-
-        int price = lastKnownPrice;
-        int changeCount = 2 + random.nextInt(3);
-        Set<Integer> changeDays = new HashSet<>();
-        while (changeDays.size() < changeCount) {
-            changeDays.add(1 + random.nextInt(29));
-        }
-
-        for (int i = 0; i < 30; i++) {
-            calendar.add(Calendar.DAY_OF_YEAR, i == 0 ? 0 : 1);
-            Date dayTimestamp = calendar.getTime();
-
-            if (i == 0 || changeDays.contains(i)) {
-                double changeFactor = 0.85 + random.nextDouble() * 0.3;
-                price = (int) Math.round(lastKnownPrice * changeFactor);
-            }
-
-            Document priceRecord = new Document()
-                    .append("timestamp", dayTimestamp)
-                    .append("price", price);
-
-            history.add(priceRecord);
-        }
-    }
-
-    private Date[] getDateRange(String period) {
-        Date endDate = new Date();
-        Date startDate;
-
-        switch (period) {
-            case "day":
-                startDate = Date.from(LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toInstant());
-                break;
-            case "week":
-                startDate = Date.from(LocalDate.now().minusDays(7).atStartOfDay(ZoneId.systemDefault()).toInstant());
-                break;
-            case "month":
-                startDate = Date.from(LocalDate.now().minusMonths(1).atStartOfDay(ZoneId.systemDefault()).toInstant());
-                break;
+                return endDate.minusMonths(1);
             default:
-                startDate = endDate;
-                break;
+                return endDate;
         }
-
-        return new Date[]{startDate, endDate};
     }
 
     private Map<String, List<Document>> groupPrices(List<Document> priceHistory, String period) {
@@ -187,13 +130,9 @@ public class PriceHistoryService {
         return groupedPrices;
     }
 
-    private String formatPriceHistory(String productId, Marketplace marketplace,
-                                      Map<String, List<Document>> groupedPrices, String period) {
+    private String formatPriceHistory(Document productInfo, Map<String, List<Document>> groupedPrices, String period) {
         StringBuilder result = new StringBuilder();
-        Document productInfo = mongoDBService.getProductInfo(productId, marketplace);
-        String productName = productInfo != null ?
-                productInfo.getList("foundProducts", Document.class).get(0).getString("name") :
-                "Неизвестный товар";
+        String productName = productInfo.getList("foundProducts", Document.class).get(0).getString("name");
 
         result.append("История цен для товара: ").append(productName).append("\n\n");
         result.append("За ").append(getPeriodName(period)).append(":\n\n");
@@ -222,10 +161,14 @@ public class PriceHistoryService {
 
     private String getPeriodName(String period) {
         switch (period) {
-            case "day": return "последние 24 часа";
-            case "week": return "последнюю неделю";
-            case "month": return "последний месяц";
-            default: return "указанный период";
+            case "day":
+                return "последние 24 часа";
+            case "week":
+                return "последнюю неделю";
+            case "month":
+                return "последний месяц";
+            default:
+                return "указанный период";
         }
     }
 }

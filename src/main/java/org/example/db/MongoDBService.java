@@ -1,3 +1,4 @@
+
 package org.example.db;
 
 import com.mongodb.client.MongoClient;
@@ -11,7 +12,13 @@ import org.bson.conversions.Bson;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
 import static com.mongodb.client.model.Filters.*;
 import static com.mongodb.client.model.Sorts.descending;
@@ -27,7 +34,6 @@ public class MongoDBService {
     private final MongoCollection<Document> errorLogsCollection;
     private final MongoCollection<Document> apiDataCollection;
     private final MongoCollection<Document> userLogsCollection;
-    private final MongoCollection<Document> productMetricsCollection;
 
     // Supported marketplaces
     public enum Marketplace {
@@ -44,14 +50,11 @@ public class MongoDBService {
         // Main product collections
         this.wbProductsCollection = saleBotDB.getCollection("wb_products");
         this.ozonProductsCollection = saleBotDB.getCollection("ozon_products");
-        this.productMetricsCollection = saleBotDB.getCollection("product_metrics");
 
         // Collections for metrics, logs and API
         this.apiRequestMetricsCollection = saleBotInfoDB.getCollection("api_request_metrics");
         this.productMetricsCollection = saleBotInfoDB.getCollection("product_metrics");
         this.commandMetricsCollection = saleBotInfoDB.getCollection("command_metrics");
-        MongoDatabase saleBotInfoDB = mongoClient.getDatabase("sale_bot_info");
-        this.apiDataCollection = saleBotInfoDB.getCollection("api_data");
         this.errorLogsCollection = saleBotInfoDB.getCollection("error_logs");
         this.apiDataCollection = saleBotInfoDB.getCollection("api_data");
         this.userLogsCollection = saleBotDB.getCollection("user_logs");
@@ -63,11 +66,8 @@ public class MongoDBService {
     private void createIndexes() {
         wbProductsCollection.createIndex(new Document("query", 1));
         wbProductsCollection.createIndex(new Document("foundProducts.productId", 1));
-        wbProductsCollection.createIndex(new Document("lastUpdated", -1));
-
         ozonProductsCollection.createIndex(new Document("query", 1));
         ozonProductsCollection.createIndex(new Document("foundProducts.productId", 1));
-        ozonProductsCollection.createIndex(new Document("lastUpdated", -1));
 
         // Indexes for API metrics
         apiRequestMetricsCollection.createIndex(new Document("timestamp", -1));
@@ -80,10 +80,6 @@ public class MongoDBService {
 
         // Indexes for errors
         errorLogsCollection.createIndex(new Document("errorType", 1));
-        productMetricsCollection.createIndex(new Document("productId", 1));
-        productMetricsCollection.createIndex(new Document("marketplace", 1));
-        productMetricsCollection.createIndex(new Document("timestamp", -1));
-
         errorLogsCollection.createIndex(new Document("timestamp", -1));
 
         // Indexes for API data
@@ -247,48 +243,6 @@ public class MongoDBService {
             }
         }
         return null;
-    public List<Document> getProductPriceHistory(String productId, Marketplace marketplace, int days) {
-        MongoCollection<Document> collection = getCollectionForMarketplace(marketplace);
-
-        Date startDate = new Date(System.currentTimeMillis() - (long) days * 24 * 60 * 60 * 1000);
-
-        Bson filter = and(
-                eq("foundProducts.productId", productId),
-                gte("lastUpdated", startDate)
-        );
-
-        return collection.find(filter)
-                .sort(descending("lastUpdated"))
-                .into(new ArrayList<>());
-    }
-
-    public List<Document> getProductMetrics(String productId, Marketplace marketplace, int days) {
-        Date startDate = new Date(System.currentTimeMillis() - (long) days * 24 * 60 * 60 * 1000);
-
-        Bson filter = and(
-                eq("productId", productId),
-                eq("marketplace", marketplace.name()),
-                gte("timestamp", startDate)
-        );
-
-        return productMetricsCollection.find(filter)
-                .sort(descending("timestamp"))
-                .into(new ArrayList<>());
-    }
-
-    private MongoCollection<Document> getCollectionForMarketplace(Marketplace marketplace) {
-        return marketplace == Marketplace.WILDBERRIES ? wbProductsCollection : ozonProductsCollection;
-    }
-
-    public void saveApiRawData(String endpoint, String request, String response) {
-        Document doc = new Document()
-                .append("timestamp", new Date())
-                .append("endpoint", endpoint)
-                .append("request", request)
-                .append("response", response)
-                .append("processed", false);
-
-        apiDataCollection.insertOne(doc);
     }
 
     public void clearOldCache(Marketplace marketplace, int hours) {
@@ -300,8 +254,6 @@ public class MongoDBService {
     // Methods for working with search and statistics
     public String getCacheInfo(Marketplace marketplace, String query) {
         Document doc = getCollectionForMarketplace(marketplace)
-    public Document getSearchStats(Marketplace marketplace, String query) {
-        return getCollectionForMarketplace(marketplace)
                 .find(eq("query", query))
                 .first();
 
@@ -353,12 +305,8 @@ public class MongoDBService {
         }
     }
 
-    public MongoCollection<Document> getProductMetricsCollection() {
-        return productMetricsCollection;
-    }
 
-    // В класс MongoDBService добавьте эти методы:
-
+    // Методы для получения информации о продукте и его ценовой истории
     public Document getProductInfo(String productId, Marketplace marketplace) {
         MongoCollection<Document> collection = getCollectionForMarketplace(marketplace);
         Bson filter = eq("foundProducts.productId", productId);
@@ -407,5 +355,10 @@ public class MongoDBService {
                 });
 
         return result;
+    }
+
+
+    public MongoCollection<Document> getProductMetricsCollection() {
+        return productMetricsCollection;
     }
 }
