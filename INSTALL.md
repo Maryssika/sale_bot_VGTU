@@ -65,5 +65,5 @@ cd sale_bot_VGTU*
   return "ВАШ_ТОКЕН_ОТ_BOTFATHER";
   }*
 ### 7. Запуск
-- Запустите класс Main.java через IDE.
+- запустите класс Main.java через IDE.
 - После запуска в консоли появится: Bot started successfully!
