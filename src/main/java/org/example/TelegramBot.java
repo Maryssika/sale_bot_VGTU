@@ -87,6 +87,12 @@ public class TelegramBot extends TelegramLongPollingBot {
                     response.setText("Введите название товара для прогноза цен на 7 дней в формате:\n\n/forecast [название товара]\n\nНапример:\n/forecast пиджак");
                     execute(response);
                     return;
+                } else if (messageText.equals("/search")) {
+                        response.setText("Введите название товара для поиска на Wildberries и Google Shopping в формате:\n\n/search [название товара]\n\nНапример:\n/search пиджак");
+                        execute(response);
+                        return;
+                } else if (messageText.startsWith("/search ")) {
+                    handleSearchEverywhereCommand(messageText, chatId, traceId, response);
                 } else if (messageText.startsWith("/wb ")) {
                     handleSearchCommand(messageText, chatId, traceId, response);
                 } else if (messageText.startsWith("/cacheinfo ")) {
@@ -100,13 +106,15 @@ public class TelegramBot extends TelegramLongPollingBot {
                             "/wb - поиск товаров на Wildberries\n" +
                             "/cacheinfo [запрос] - информация о кэше\n" +
                             "/forecast [запрос] - прогноз цен на 7 дней\n" +
-                            "/google [запрос] - поиск товаров в Google Shopping");
+                            "/google [запрос] - поиск товаров в Google Shopping\n" +
+                            "/search [запрос] - поиск товаров по всем магазинам ");
                 } else {
                     response.setText("Неизвестная команда. Доступные команды:\n" +
                             "/wb - поиск товаров\n" +
                             "/cacheinfo [запрос] - информация о кэше\n" +
                             "/forecast [запрос] - прогноз цен на 7 дней\n" +
-                            "/google [запрос] - поиск товаров в Google Shopping");
+                            "/google [запрос] - поиск товаров в Google Shopping\n" +
+                            "/search [запрос] - поиск товаров по всем магазинам ");
                 }
 
                 execute(response);
@@ -121,6 +129,39 @@ public class TelegramBot extends TelegramLongPollingBot {
                 }
             }
         }
+    }
+
+
+    // Новый метод для поиска везде
+    private void handleSearchEverywhereCommand(String messageText, long chatId, String traceId, SendMessage response) {
+        String query = messageText.substring(8).trim(); // Обрезаем "/search "
+
+        if (query.isEmpty()) {
+            response.setText("Введите поисковый запрос после команды /search");
+            mongoDBService.logCommand("empty_search_query",
+                    mongoDBService.createMetadata(traceId, chatId).build());
+            return;
+        }
+
+        mongoDBService.logCommand("search_everywhere_command",
+                mongoDBService.createMetadata(traceId, chatId)
+                        .with("query", query)
+                        .build());
+
+        // Ищем на Wildberries
+        String wbResult = wbApiClient.searchProduct(query, chatId, traceId);
+
+        // Ищем в Google Shopping
+        String googleResult = googleShoppingParser.parseGoogleShopping(query);
+
+        // Формируем комбинированный результат
+        String combinedResult = "🔍 Результаты поиска '" + query + "':\n\n" +
+                "🛍 Wildberries:\n" + wbResult + "\n\n" +
+                "🛒 Google Shopping:\n" + googleResult;
+
+        response.setText(combinedResult);
+
+        mongoDBService.logSearchQuery(query, traceId);
     }
 
     private void handleGoogleShoppingCommand(String messageText, long chatId, String traceId, SendMessage response) {
