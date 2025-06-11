@@ -101,15 +101,6 @@ Beta: Основные функции работают, но возможны д
 
 - Оптимизации работы с MongoDB.
 
-# Open source licensing info
-
-- [CHANGELOG](docs/CHANGELOG.md)
-- [CODE_OF_CONDUCT.md](docs/CODE_OF_CONDUCT.md)
-- [CONTRIBUTING.md](docs/CONTRIBUTING.md)
-- [INSTALL.md](docs/INSTALL.md)
-- [LICENSE](LICENSE)
-- [TERMS.md](docs/TERMS.md) 
-
 # Источники и справочники
 - Документация Wildberries API.
 
