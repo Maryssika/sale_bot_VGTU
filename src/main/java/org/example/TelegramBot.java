@@ -10,7 +10,8 @@ import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.User;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
-
+import java.io.InputStream;
+import java.util.Properties;
 import java.util.Arrays;
 import java.util.UUID;
 
@@ -42,7 +43,7 @@ public class TelegramBot extends TelegramLongPollingBot {
             String action = "command";
             String query = "";
 
-            if (messageText.startsWith("/search ")) {
+            if (messageText.startsWith("/wb ")) {
                 action = "search";
                 query = messageText.substring(8).trim();
             } else if (messageText.startsWith("/cacheinfo ")) {
@@ -159,9 +160,11 @@ public class TelegramBot extends TelegramLongPollingBot {
 
 
     private void handleSearchCommand(String messageText, long chatId, String traceId, SendMessage response) {
-        String query = messageText.substring(8).trim();
+        // Изменяем способ извлечения запроса
+        String query = messageText.replaceFirst("/wb\\s+", "").trim();
+
         if (query.isEmpty()) {
-            response.setText("Введите поисковый запрос после команды /search");
+            response.setText("Введите поисковый запрос после команды /wb");
             mongoDBService.logCommand("empty_search_query",
                     mongoDBService.createMetadata(traceId, chatId).build());
             return;
@@ -175,7 +178,6 @@ public class TelegramBot extends TelegramLongPollingBot {
         String searchResult = wbApiClient.searchProduct(query, chatId, traceId);
         response.setText(searchResult);
 
-        // Use the newly added logSearchQuery method
         mongoDBService.logSearchQuery(query, traceId);
     }
 
@@ -219,6 +221,13 @@ public class TelegramBot extends TelegramLongPollingBot {
 
     @Override
     public String getBotToken() {
-        return "7472746068:AAG-Uj1CvFFtLiO9r8agC4o5dsGx1XUeZ3I";
+        try (InputStream input = getClass().getClassLoader().getResourceAsStream("config.properties")) {
+            Properties prop = new Properties();
+            prop.load(input);
+            return prop.getProperty("bot.token");
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            throw new RuntimeException("Failed to load bot token from config");
+        }
     }
 }
