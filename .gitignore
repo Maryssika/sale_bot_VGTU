@@ -36,3 +36,6 @@ build/
 
 ### Mac OS ###
 .DS_Store
+
+###токен тг бота тут###
+src/main/resources/config.properties
